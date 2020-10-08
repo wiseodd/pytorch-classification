@@ -16,7 +16,7 @@ class Bottleneck(nn.Module):
         self.bn1 = nn.BatchNorm2d(inplanes)
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
-        self.conv2 = nn.Conv2d(planes, growthRate, kernel_size=3, 
+        self.conv2 = nn.Conv2d(planes, growthRate, kernel_size=3,
                                padding=1, bias=False)
         self.relu = nn.ReLU(inplace=True)
         self.dropRate = dropRate
@@ -41,7 +41,7 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         planes = expansion * growthRate
         self.bn1 = nn.BatchNorm2d(inplanes)
-        self.conv1 = nn.Conv2d(inplanes, growthRate, kernel_size=3, 
+        self.conv1 = nn.Conv2d(inplanes, growthRate, kernel_size=3,
                                padding=1, bias=False)
         self.relu = nn.ReLU(inplace=True)
         self.dropRate = dropRate
@@ -76,8 +76,7 @@ class Transition(nn.Module):
 
 class DenseNet(nn.Module):
 
-    def __init__(self, depth=22, block=Bottleneck, 
-        dropRate=0, num_classes=10, growthRate=12, compressionRate=2):
+    def __init__(self, depth=100, block=Bottleneck, dropRate=0, num_classes=10, growthRate=12, compressionRate=2, feature_extractor=False):
         super(DenseNet, self).__init__()
 
         assert (depth - 4) % 3 == 0, 'depth should be 3n+4'
@@ -85,10 +84,11 @@ class DenseNet(nn.Module):
 
         self.growthRate = growthRate
         self.dropRate = dropRate
+        self.feature_extractor = feature_extractor
 
         # self.inplanes is a global variable used across multiple
         # helper functions
-        self.inplanes = growthRate * 2 
+        self.inplanes = growthRate * 2
         self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, padding=1,
                                bias=False)
         self.dense1 = self._make_denseblock(block, n)
@@ -98,8 +98,9 @@ class DenseNet(nn.Module):
         self.dense3 = self._make_denseblock(block, n)
         self.bn = nn.BatchNorm2d(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(self.inplanes, 256, kernel_size=3, padding=1)
         self.avgpool = nn.AvgPool2d(8)
-        self.fc = nn.Linear(self.inplanes, num_classes)
+        self.fc = nn.Linear(256, num_classes)
 
         # Weight initialization
         for m in self.modules():
@@ -125,25 +126,34 @@ class DenseNet(nn.Module):
         self.inplanes = outplanes
         return Transition(inplanes, outplanes)
 
-
     def forward(self, x):
-        x = self.conv1(x)
+        x = self.features(x)
 
-        x = self.trans1(self.dense1(x)) 
-        x = self.trans2(self.dense2(x)) 
+        if self.feature_extractor:
+            return x
+        else:
+            return self.fc(x)
+
+    def features(self, x):
+        x = self.conv1(x)
+        x = self.trans1(self.dense1(x))
+        x = self.trans2(self.dense2(x))
         x = self.dense3(x)
         x = self.bn(x)
         x = self.relu(x)
-
+        x = self.conv2(x)
+        x = F.relu(x)
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-        x = self.fc(x)
-
         return x
 
 
 def densenet(**kwargs):
-    """
-    Constructs a ResNet model.
-    """
     return DenseNet(**kwargs)
+
+
+def densenetbc121(num_classes, feature_extractor=False):
+    return DenseNet(
+        num_classes=num_classes, depth=100, growthRate=12,
+        compressionRate=2, dropRate=0, feature_extractor=feature_extractor
+    )

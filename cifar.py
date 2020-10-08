@@ -24,8 +24,8 @@ from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 from tqdm import tqdm, trange
 
 
-# path = '/mnt/Data/Datasets'
-path = '/home/ubuntu/Datasets'
+path = '/mnt/Data/Datasets'
+# path = '/home/ubuntu/Datasets'
 
 
 model_names = sorted(name for name in models.__dict__
