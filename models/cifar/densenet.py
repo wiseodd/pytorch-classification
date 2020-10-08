@@ -134,18 +134,25 @@ class DenseNet(nn.Module):
         else:
             return self.fc(x)
 
-    def features(self, x):
+    def features(self, x, return_acts=False):
+        acts = []
+
         x = self.conv1(x)
+        acts.append(x)
         x = self.trans1(self.dense1(x))
+        acts.append(x)
         x = self.trans2(self.dense2(x))
+        acts.append(x)
         x = self.dense3(x)
         x = self.bn(x)
         x = self.relu(x)
+        acts.append(x)
         x = self.conv2(x)
         x = F.relu(x)
+        acts.append(x)
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-        return x
+        return x if not return_acts else (x, acts)
 
 
 def densenet(**kwargs):
