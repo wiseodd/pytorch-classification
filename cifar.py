@@ -1,5 +1,5 @@
 '''
-Training script for CIFAR-10/100
+Training script for CIFAR-10/100 & SVHN
 Copyright (c) Wei YANG, 2017
 '''
 from __future__ import print_function
@@ -21,13 +21,18 @@ import torchvision.datasets as datasets
 import models.cifar as models
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
+from tqdm import tqdm, trange
+
+
+# path = '/mnt/Data/Datasets'
+path = '/home/ubuntu/Datasets'
 
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
-parser = argparse.ArgumentParser(description='PyTorch CIFAR10/100 Training')
+parser = argparse.ArgumentParser(description='PyTorch CIFAR10/100 & SVHN Training')
 # Datasets
 parser.add_argument('-d', '--dataset', default='cifar10', type=str)
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -65,7 +70,7 @@ parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet20',
                         ' (default: resnet18)')
 parser.add_argument('--depth', type=int, default=29, help='Model depth.')
 parser.add_argument('--block-name', type=str, default='BasicBlock',
-                    help='the building block for Resnet and Preresnet: BasicBlock, Bottleneck (default: Basicblock for cifar10/cifar100)')
+                    help='the building block for Resnet and Preresnet: BasicBlock, Bottleneck (default: Basicblock for cifar10/cifar100/svhn)')
 parser.add_argument('--cardinality', type=int, default=8, help='Model cardinality (group).')
 parser.add_argument('--widen-factor', type=int, default=4, help='Widen factor. 4 -> 64, 8 -> 128, ...')
 parser.add_argument('--growthRate', type=int, default=12, help='Growth rate for DenseNet.')
@@ -82,7 +87,7 @@ args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
 
 # Validate dataset
-assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can only be cifar10 or cifar100.'
+assert args.dataset == 'cifar10' or args.dataset == 'cifar100' or args.dataset == 'svhn', 'Dataset can only be cifar10 or cifar100.'
 
 # Use CUDA
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
@@ -105,8 +110,6 @@ def main():
     if not os.path.isdir(args.checkpoint):
         mkdir_p(args.checkpoint)
 
-
-
     # Data
     print('==> Preparing dataset %s' % args.dataset)
     transform_train = transforms.Compose([
@@ -123,15 +126,18 @@ def main():
     if args.dataset == 'cifar10':
         dataloader = datasets.CIFAR10
         num_classes = 10
+    elif args.dataset == 'svhn':
+        dataloader = datasets.SVHN
+        num_classes = 10
     else:
         dataloader = datasets.CIFAR100
         num_classes = 100
 
 
-    trainset = dataloader(root='./data', train=True, download=True, transform=transform_train)
+    trainset = dataloader(root=path, train=True, download=True, transform=transform_train)
     trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers)
 
-    testset = dataloader(root='./data', train=False, download=False, transform=transform_test)
+    testset = dataloader(root=path, train=False, download=False, transform=transform_test)
     testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
 
     # Model
@@ -175,7 +181,7 @@ def main():
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
     # Resume
-    title = 'cifar-10-' + args.arch
+    title = args.dataset + args.arch
     if args.resume:
         # Load checkpoint.
         print('==> Resuming from checkpoint..')
@@ -199,13 +205,19 @@ def main():
         return
 
     # Train and val
-    for epoch in range(start_epoch, args.epochs):
+    pbar = trange(start_epoch, args.epochs)
+    pbar.set_description(f'[Epoch: 0; LR: {state["lr"]}; ValAcc: N/A]')
+
+    for epoch in pbar:
         adjust_learning_rate(optimizer, epoch)
 
-        print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, state['lr']))
+        # print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, state['lr']))
 
         train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda)
         test_loss, test_acc = test(testloader, model, criterion, epoch, use_cuda)
+
+        # Telemetry
+        pbar.set_description(f'[Epoch: {epoch+1}; LR: {state["lr"]}; ValAcc: {test_acc:.1f}]')
 
         # append logger file
         logger.append([state['lr'], train_loss, test_loss, train_acc, test_acc])
@@ -239,14 +251,13 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     top5 = AverageMeter()
     end = time.time()
 
-    bar = Bar('Processing', max=len(trainloader))
+    # bar = Bar('Processing', max=len(trainloader))
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         # measure data loading time
         data_time.update(time.time() - end)
 
         if use_cuda:
-            inputs, targets = inputs.cuda(), targets.cuda(async=True)
-        inputs, targets = torch.autograd.Variable(inputs), torch.autograd.Variable(targets)
+            inputs, targets = inputs.cuda(), targets.cuda()
 
         # compute output
         outputs = model(inputs)
@@ -254,9 +265,9 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        losses.update(loss.data[0], inputs.size(0))
-        top1.update(prec1[0], inputs.size(0))
-        top5.update(prec5[0], inputs.size(0))
+        losses.update(loss.item(), inputs.size(0))
+        top1.update(prec1.item(), inputs.size(0))
+        top5.update(prec5.item(), inputs.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -268,19 +279,19 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         end = time.time()
 
         # plot progress
-        bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
-                    batch=batch_idx + 1,
-                    size=len(trainloader),
-                    data=data_time.avg,
-                    bt=batch_time.avg,
-                    total=bar.elapsed_td,
-                    eta=bar.eta_td,
-                    loss=losses.avg,
-                    top1=top1.avg,
-                    top5=top5.avg,
-                    )
-        bar.next()
-    bar.finish()
+    #     bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+    #                 batch=batch_idx + 1,
+    #                 size=len(trainloader),
+    #                 data=data_time.avg,
+    #                 bt=batch_time.avg,
+    #                 total=bar.elapsed_td,
+    #                 eta=bar.eta_td,
+    #                 loss=losses.avg,
+    #                 top1=top1.avg,
+    #                 top5=top5.avg,
+    #                 )
+    #     bar.next()
+    # bar.finish()
     return (losses.avg, top1.avg)
 
 def test(testloader, model, criterion, epoch, use_cuda):
@@ -296,14 +307,13 @@ def test(testloader, model, criterion, epoch, use_cuda):
     model.eval()
 
     end = time.time()
-    bar = Bar('Processing', max=len(testloader))
+    # bar = Bar('Processing', max=len(testloader))
     for batch_idx, (inputs, targets) in enumerate(testloader):
         # measure data loading time
         data_time.update(time.time() - end)
 
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
-        inputs, targets = torch.autograd.Variable(inputs, volatile=True), torch.autograd.Variable(targets)
 
         # compute output
         outputs = model(inputs)
@@ -311,35 +321,35 @@ def test(testloader, model, criterion, epoch, use_cuda):
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        losses.update(loss.data[0], inputs.size(0))
-        top1.update(prec1[0], inputs.size(0))
-        top5.update(prec5[0], inputs.size(0))
+        losses.update(loss.item(), inputs.size(0))
+        top1.update(prec1.item(), inputs.size(0))
+        top5.update(prec5.item(), inputs.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
-        # plot progress
-        bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
-                    batch=batch_idx + 1,
-                    size=len(testloader),
-                    data=data_time.avg,
-                    bt=batch_time.avg,
-                    total=bar.elapsed_td,
-                    eta=bar.eta_td,
-                    loss=losses.avg,
-                    top1=top1.avg,
-                    top5=top5.avg,
-                    )
-        bar.next()
-    bar.finish()
+    #     # plot progress
+    #     bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+    #                 batch=batch_idx + 1,
+    #                 size=len(testloader),
+    #                 data=data_time.avg,
+    #                 bt=batch_time.avg,
+    #                 total=bar.elapsed_td,
+    #                 eta=bar.eta_td,
+    #                 loss=losses.avg,
+    #                 top1=top1.avg,
+    #                 top5=top5.avg,
+    #                 )
+    #     bar.next()
+    # bar.finish()
     return (losses.avg, top1.avg)
 
-def save_checkpoint(state, is_best, checkpoint='checkpoint', filename='checkpoint.pth.tar'):
+def save_checkpoint(state, is_best, checkpoint='checkpoint', filename='checkpoint.pt'):
     filepath = os.path.join(checkpoint, filename)
     torch.save(state, filepath)
     if is_best:
-        shutil.copyfile(filepath, os.path.join(checkpoint, 'model_best.pth.tar'))
+        shutil.copyfile(filepath, os.path.join(checkpoint, 'model_best.pt'))
 
 def adjust_learning_rate(optimizer, epoch):
     global state
