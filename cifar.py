@@ -133,12 +133,18 @@ def main():
         dataloader = datasets.CIFAR100
         num_classes = 100
 
+    if args.dataset == 'svhn':
+        trainset = dataloader(root=path, split='train', download=True, transform=transform_train)
+        trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers)
 
-    trainset = dataloader(root=path, train=True, download=True, transform=transform_train)
-    trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers)
+        testset = dataloader(root=path, split='test', download=False, transform=transform_test)
+        testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
+    else:
+        trainset = dataloader(root=path, train=True, download=True, transform=transform_train)
+        trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers)
 
-    testset = dataloader(root=path, train=False, download=False, transform=transform_test)
-    testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
+        testset = dataloader(root=path, train=False, download=False, transform=transform_test)
+        testloader = data.DataLoader(testset, batch_size=args.test_batch, shuffle=False, num_workers=args.workers)
 
     # Model
     print("==> creating model '{}'".format(args.arch))
@@ -251,7 +257,6 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     top5 = AverageMeter()
     end = time.time()
 
-    # bar = Bar('Processing', max=len(trainloader))
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         # measure data loading time
         data_time.update(time.time() - end)
@@ -278,20 +283,6 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         batch_time.update(time.time() - end)
         end = time.time()
 
-        # plot progress
-    #     bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
-    #                 batch=batch_idx + 1,
-    #                 size=len(trainloader),
-    #                 data=data_time.avg,
-    #                 bt=batch_time.avg,
-    #                 total=bar.elapsed_td,
-    #                 eta=bar.eta_td,
-    #                 loss=losses.avg,
-    #                 top1=top1.avg,
-    #                 top5=top5.avg,
-    #                 )
-    #     bar.next()
-    # bar.finish()
     return (losses.avg, top1.avg)
 
 def test(testloader, model, criterion, epoch, use_cuda):
@@ -307,7 +298,6 @@ def test(testloader, model, criterion, epoch, use_cuda):
     model.eval()
 
     end = time.time()
-    # bar = Bar('Processing', max=len(testloader))
     for batch_idx, (inputs, targets) in enumerate(testloader):
         # measure data loading time
         data_time.update(time.time() - end)
@@ -329,20 +319,6 @@ def test(testloader, model, criterion, epoch, use_cuda):
         batch_time.update(time.time() - end)
         end = time.time()
 
-    #     # plot progress
-    #     bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
-    #                 batch=batch_idx + 1,
-    #                 size=len(testloader),
-    #                 data=data_time.avg,
-    #                 bt=batch_time.avg,
-    #                 total=bar.elapsed_td,
-    #                 eta=bar.eta_td,
-    #                 loss=losses.avg,
-    #                 top1=top1.avg,
-    #                 top5=top5.avg,
-    #                 )
-    #     bar.next()
-    # bar.finish()
     return (losses.avg, top1.avg)
 
 def save_checkpoint(state, is_best, checkpoint='checkpoint', filename='checkpoint.pt'):
