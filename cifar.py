@@ -96,6 +96,7 @@ use_cuda = torch.cuda.is_available()
 # Random seed
 if args.manualSeed is None:
     args.manualSeed = random.randint(1, 10000)
+    print(f'Random seed: {args.manualSeed}')
 random.seed(args.manualSeed)
 torch.manual_seed(args.manualSeed)
 if use_cuda:
@@ -212,7 +213,7 @@ def main():
 
     # Train and val
     pbar = trange(start_epoch, args.epochs)
-    pbar.set_description(f'[Epoch: 0; LR: {state["lr"]}; ValAcc: N/A]')
+    pbar.set_description(f'[Epoch: 0; LR: {state["lr"]:.4f}; ValAcc: N/A]')
 
     for epoch in pbar:
         adjust_learning_rate(optimizer, epoch)
@@ -223,7 +224,7 @@ def main():
         test_loss, test_acc = test(testloader, model, criterion, epoch, use_cuda)
 
         # Telemetry
-        pbar.set_description(f'[Epoch: {epoch+1}; LR: {state["lr"]}; ValAcc: {test_acc:.1f}]')
+        pbar.set_description(f'[Epoch: {epoch+1}; LR: {state["lr"]:.4f}; ValAcc: {test_acc:.1f}]')
 
         # append logger file
         logger.append([state['lr'], train_loss, test_loss, train_acc, test_acc])

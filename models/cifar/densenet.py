@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 
 
-__all__ = ['densenet']
+__all__ = ['densenet', 'densenetbc121', 'densenetbc121_Alt']
 
 
 from torch.autograd import Variable
@@ -155,12 +155,120 @@ class DenseNet(nn.Module):
         return x if not return_acts else (x, acts)
 
 
+class DenseNet2(nn.Module):
+
+    def __init__(self, depth=100, block=Bottleneck, dropRate=0, num_classes=10, growthRate=12, compressionRate=2, feature_extractor=False):
+        super(DenseNet2, self).__init__()
+
+        assert (depth - 4) % 3 == 0, 'depth should be 3n+4'
+        n = (depth - 4) / 3 if block == BasicBlock else (depth - 4) // 6
+
+        self.growthRate = growthRate
+        self.dropRate = dropRate
+        self.feature_extractor = feature_extractor
+
+        # self.inplanes is a global variable used across multiple
+        # helper functions
+        self.inplanes = growthRate * 2
+        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, padding=1,
+                               bias=False)
+        self.dense1 = self._make_denseblock(block, n)
+        self.trans1 = self._make_transition(compressionRate)
+        self.dense2 = self._make_denseblock(block, n)
+        self.trans2 = self._make_transition(compressionRate)
+        self.dense3 = self._make_denseblock(block, n)
+        self.bn = nn.BatchNorm2d(self.inplanes)
+        self.relu = nn.ReLU(inplace=True)
+        self.clf = nn.Sequential(
+            nn.Conv2d(self.inplanes, 256, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.AvgPool2d(8),
+            nn.Flatten(),
+            nn.Linear(256, num_classes)
+        )
+
+        # Weight initialization
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+    def _make_denseblock(self, block, blocks):
+        layers = []
+        for i in range(blocks):
+            # Currently we fix the expansion ratio as the default value
+            layers.append(block(self.inplanes, growthRate=self.growthRate, dropRate=self.dropRate))
+            self.inplanes += self.growthRate
+
+        return nn.Sequential(*layers)
+
+    def _make_transition(self, compressionRate):
+        inplanes = self.inplanes
+        outplanes = int(math.floor(self.inplanes // compressionRate))
+        self.inplanes = outplanes
+        return Transition(inplanes, outplanes)
+
+    def forward(self, x):
+        x = self.features_before_clf(x)
+
+        if self.feature_extractor:
+            return x
+        else:
+            return self.clf(x)
+
+    def features(self, x, return_acts=False):
+        acts = []
+
+        x = self.conv1(x)
+        acts.append(x)
+        x = self.trans1(self.dense1(x))
+        acts.append(x)
+        x = self.trans2(self.dense2(x))
+        acts.append(x)
+        x = self.dense3(x)
+        x = self.bn(x)
+        x = self.relu(x)
+        acts.append(x)
+
+        # Apply all but the last module in clf
+        for m in list(self.clf.children())[:-1]:
+            x = m(x)
+
+        return x if not return_acts else (x, acts)
+
+    def features_before_clf(self, x, return_acts=False):
+        acts = []
+
+        x = self.conv1(x)
+        acts.append(x)
+        x = self.trans1(self.dense1(x))
+        acts.append(x)
+        x = self.trans2(self.dense2(x))
+        acts.append(x)
+        x = self.dense3(x)
+        x = self.bn(x)
+        x = self.relu(x)
+        acts.append(x)
+
+        return x if not return_acts else (x, acts)
+
+
 def densenet(**kwargs):
     return DenseNet(**kwargs)
 
 
 def densenetbc121(num_classes, feature_extractor=False):
     return DenseNet(
+        num_classes=num_classes, depth=100, growthRate=12,
+        compressionRate=2, dropRate=0, feature_extractor=feature_extractor
+    )
+
+
+def densenetbc121_Alt(num_classes, feature_extractor=False):
+    return DenseNet2(
         num_classes=num_classes, depth=100, growthRate=12,
         compressionRate=2, dropRate=0, feature_extractor=feature_extractor
     )
