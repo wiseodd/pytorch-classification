@@ -13,40 +13,68 @@ import torch.optim as optim
 import torch.utils.data as data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import models.cifar.densenet as mc
+import models.cifar as models
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 from tqdm import tqdm, trange
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-d', '--dataset', default='cifar10', type=str)
+parser.add_argument('--mcd', default=False, action='store_true')
+parser.add_argument('--deepens', default=False, action='store_true')
 args = parser.parse_args()
 
 num_classes = 100 if args.dataset == 'cifar100' else 10
 
-model = torch.nn.DataParallel(mc.densenetbc121(num_classes=num_classes))
-checkpoint = torch.load(f'checkpoints/{args.dataset}/densenet-bc-100-12/model_best.pt')
-state_dict = checkpoint['state_dict']
-model.load_state_dict(state_dict)
 
-# Translate last-layers classifier
-state_dict['module.clf.0.weight'] = state_dict.pop('module.conv2.weight')
-state_dict['module.clf.0.bias'] = state_dict.pop('module.conv2.bias')
-state_dict['module.clf.4.weight'] = state_dict.pop('module.fc.weight')
-state_dict['module.clf.4.bias'] = state_dict.pop('module.fc.bias')
+def get_model(fname: str):
+    model = torch.nn.DataParallel(models.densenetbc121(num_classes=num_classes))
+    checkpoint = torch.load(fname)
+    state_dict = checkpoint['state_dict']
+    model.load_state_dict(state_dict)
 
-# Unwrap DataParallel
-state_dict_noDP = {}
+    # Translate last-layers classifier
+    state_dict['module.clf.0.weight'] = state_dict.pop('module.conv2.weight')
+    state_dict['module.clf.0.bias'] = state_dict.pop('module.conv2.bias')
+    state_dict['module.clf.4.weight'] = state_dict.pop('module.fc.weight')
+    state_dict['module.clf.4.bias'] = state_dict.pop('module.fc.bias')
 
-for k in state_dict.keys():
-    # Remove "module."
-    state_dict_noDP[k[7:]] = state_dict[k]
+    # Unwrap DataParallel
+    state_dict_noDP = {}
 
-# Check load on non-DataParallel model
-model2 = mc.densenetbc121_Alt(num_classes=num_classes).cuda()
-model2.load_state_dict(state_dict_noDP)
+    for k in state_dict.keys():
+        # Remove "module."
+        state_dict_noDP[k[7:]] = state_dict[k]
 
-# Save
-torch.save(state_dict_noDP, f'checkpoints/{args.dataset.upper()}_plain_densenet.pt')
+    # Check load on non-DataParallel model
+    model2 = models.densenetbc121_Alt(num_classes=num_classes).cuda()
+    model2.load_state_dict(state_dict_noDP)
+
+    return model2
+
+
+path_plain = f'checkpoints/{args.dataset}'
+
+if args.mcd:
+    path = path_plain + '/dropout'
+elif args.deepens:
+    path = path_plain + '/deepens'
+else:
+    path = path_plain
+
+
+if not args.deepens:  # Plain and dropout
+    model = get_model(f'{path}/densenet-bc-100-12/model_best.pt')
+    type = 'mcd' if args.mcd else 'plain'
+    torch.save(model.state_dict(), f'checkpoints/{args.dataset.upper()}_{type}_densenet.pt')
+else:
+    # The first model is the "plain" model
+    models_de = [get_model(f'{path_plain}/densenet-bc-100-12/model_best.pt')]
+
+    for i in range(1, 5):  # 1,...,4
+        model = get_model(f'{path}/densenet-bc-100-12-{i}/model_best.pt')
+        models_de.append(model)
+
+    torch.save([m.state_dict() for m in models_de], f'checkpoints/{args.dataset.upper()}_de_densenet.pt')
 
 
 ############################
@@ -94,7 +122,7 @@ else:
 
 
 @torch.no_grad()
-def test(testloader, model):
+def predict(testloader, model):
     outs, targets = [], []
 
     # switch to evaluate mode
@@ -102,17 +130,27 @@ def test(testloader, model):
 
     for batch_idx, (x, y) in enumerate(testloader):
         x = x.cuda()
-        outputs = model(x)
+        outputs = torch.softmax(model(x), -1)
         outs.append(outputs.cpu())
         targets.append(y)
 
     outs = torch.cat(outs, dim=0).numpy()
     targets = torch.cat(targets).numpy()
 
-    acc = np.mean(outs.argmax(-1) == targets) * 100
-
-    return acc
+    return outs, targets
 
 
-test_acc = test(testloader, model2)
-print('Test Acc:  %.2f' % (test_acc))
+if not args.deepens:
+    pys, targets = predict(testloader, model)
+    test_acc = np.mean(pys.argmax(-1) == targets) * 100
+    print('Test Acc:  %.2f' % (test_acc))
+else:
+    py = 0
+    K = len(models_de)
+
+    for k in range(K):
+        py_, targets = predict(testloader, models_de[k])
+        py += 1/K * py_
+
+    test_acc = np.mean(np.argmax(py, 1) == targets)*100
+    print('Test Acc:  %.2f' % (test_acc))
